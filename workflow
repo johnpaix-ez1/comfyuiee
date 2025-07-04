@@ -2,7 +2,7 @@
   "id": "18fa08f5-ea86-42c7-93e6-7539622ad7d0",
   "revision": 0,
   "last_node_id": 330,
-  "last_link_id": 693,
+  "last_link_id": 694,
   "nodes": [
     {
       "id": 253,
@@ -67,49 +67,6 @@
       },
       "color": "#fff0",
       "bgcolor": "#fff0"
-    },
-    {
-      "id": 210,
-      "type": "DownloadAndLoadFlorence2Model",
-      "pos": [
-        -1253.0166015625,
-        -12.31124210357666
-      ],
-      "size": [
-        365.4000244140625,
-        130
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "lora",
-          "shape": 7,
-          "type": "PEFTLORA",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "florence2_model",
-          "type": "FL2MODEL",
-          "links": [
-            459
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfyui-florence2",
-        "ver": "c9bd1d34eb8689746366d4bb34dfbb195aa8d0e1",
-        "Node name for S&R": "DownloadAndLoadFlorence2Model"
-      },
-      "widgets_values": [
-        "MiaoshouAI/Florence-2-base-PromptGen-v2.0",
-        "fp16",
-        "sdpa",
-        false
-      ]
     },
     {
       "id": 221,
@@ -473,7 +430,7 @@
         82
       ],
       "flags": {},
-      "order": 20,
+      "order": 19,
       "mode": 4,
       "inputs": [
         {
@@ -516,7 +473,7 @@
         82
       ],
       "flags": {},
-      "order": 17,
+      "order": 16,
       "mode": 4,
       "inputs": [
         {
@@ -686,7 +643,7 @@
         150
       ],
       "flags": {},
-      "order": 19,
+      "order": 18,
       "mode": 0,
       "inputs": [
         {
@@ -832,7 +789,7 @@
         123.56919860839844
       ],
       "flags": {},
-      "order": 3,
+      "order": 2,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -956,7 +913,7 @@
         286
       ],
       "flags": {},
-      "order": 16,
+      "order": 15,
       "mode": 0,
       "inputs": [
         {
@@ -1158,7 +1115,7 @@
         106
       ],
       "flags": {},
-      "order": 4,
+      "order": 3,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -1198,7 +1155,7 @@
         58
       ],
       "flags": {},
-      "order": 5,
+      "order": 4,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -1291,7 +1248,7 @@
         85.9513168334961
       ],
       "flags": {},
-      "order": 6,
+      "order": 5,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -1327,7 +1284,7 @@
         1105.521240234375
       ],
       "flags": {},
-      "order": 7,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
@@ -1448,127 +1405,6 @@
       ]
     },
     {
-      "id": 320,
-      "type": "Bjornulf_DisplayNote",
-      "pos": [
-        -286.9435729980469,
-        205.4495391845703
-      ],
-      "size": [
-        236.79998779296875,
-        88
-      ],
-      "flags": {},
-      "order": 21,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "any",
-          "type": "*",
-          "link": 665
-        }
-      ],
-      "outputs": [
-        {
-          "name": "any",
-          "type": "*",
-          "links": [
-            691
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "bjornulf_custom_nodes",
-        "ver": "1.1.8",
-        "Node name for S&R": "Bjornulf_DisplayNote"
-      },
-      "widgets_values": [
-        ""
-      ]
-    },
-    {
-      "id": 329,
-      "type": "PreviewAny",
-      "pos": [
-        -522.6376953125,
-        159.1199951171875
-      ],
-      "size": [
-        140,
-        76
-      ],
-      "flags": {},
-      "order": 23,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "source",
-          "type": "*",
-          "link": 691
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.3.43",
-        "Node name for S&R": "PreviewAny"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 295,
-      "type": "GetImageSizeAndCount",
-      "pos": [
-        -1572.6990966796875,
-        624.3512573242188
-      ],
-      "size": [
-        190.86483764648438,
-        86
-      ],
-      "flags": {},
-      "order": 15,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 614
-        }
-      ],
-      "outputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "links": null
-        },
-        {
-          "label": "368 width",
-          "name": "width",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "label": "640 height",
-          "name": "height",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "label": "97 count",
-          "name": "count",
-          "type": "INT",
-          "links": []
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfyui-kjnodes",
-        "ver": "1.1.2",
-        "Node name for S&R": "GetImageSizeAndCount"
-      },
-      "widgets_values": []
-    },
-    {
       "id": 256,
       "type": "Reroute",
       "pos": [
@@ -1605,120 +1441,6 @@
         "showOutputText": false,
         "horizontal": false
       }
-    },
-    {
-      "id": 209,
-      "type": "ImageFromBatch+",
-      "pos": [
-        -1290.5194091796875,
-        561.5611572265625
-      ],
-      "size": [
-        315,
-        82
-      ],
-      "flags": {},
-      "order": 14,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 524
-        }
-      ],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "slot_index": 0,
-          "links": [
-            458
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfyui_essentials",
-        "ver": "1.1.0",
-        "Node name for S&R": "ImageFromBatch+"
-      },
-      "widgets_values": [
-        2,
-        1
-      ]
-    },
-    {
-      "id": 188,
-      "type": "Florence2Run",
-      "pos": [
-        -927.8863525390625,
-        272.22161865234375
-      ],
-      "size": [
-        400,
-        364
-      ],
-      "flags": {},
-      "order": 18,
-      "mode": 0,
-      "inputs": [
-        {
-          "label": "image",
-          "name": "image",
-          "type": "IMAGE",
-          "link": 458
-        },
-        {
-          "label": "florence2_model",
-          "name": "florence2_model",
-          "type": "FL2MODEL",
-          "link": 459
-        }
-      ],
-      "outputs": [
-        {
-          "label": "image",
-          "name": "image",
-          "type": "IMAGE"
-        },
-        {
-          "label": "mask",
-          "name": "mask",
-          "type": "MASK"
-        },
-        {
-          "label": "caption",
-          "name": "caption",
-          "type": "STRING",
-          "slot_index": 2,
-          "links": [
-            665,
-            693
-          ]
-        },
-        {
-          "label": "data",
-          "name": "data",
-          "type": "JSON"
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfyui-florence2",
-        "ver": "f59d5c34d9c5693473e873dacbedd86857749cf4",
-        "Node name for S&R": "Florence2Run"
-      },
-      "widgets_values": [
-        "",
-        "more_detailed_caption",
-        true,
-        false,
-        4096,
-        3,
-        true,
-        "",
-        77777777777778,
-        "fixed"
-      ]
     },
     {
       "id": 226,
@@ -1785,6 +1507,294 @@
         "simple",
         0.4000000000000001
       ]
+    },
+    {
+      "id": 295,
+      "type": "GetImageSizeAndCount",
+      "pos": [
+        -1572.6990966796875,
+        624.3512573242188
+      ],
+      "size": [
+        190.86483764648438,
+        86
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 614
+        }
+      ],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "label": "368 width",
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "640 height",
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "label": "97 count",
+          "name": "count",
+          "type": "INT",
+          "links": [
+            694
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-kjnodes",
+        "ver": "1.1.2",
+        "Node name for S&R": "GetImageSizeAndCount"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 209,
+      "type": "ImageFromBatch+",
+      "pos": [
+        -1290.5194091796875,
+        561.5611572265625
+      ],
+      "size": [
+        315,
+        82
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 524
+        },
+        {
+          "name": "length",
+          "type": "INT",
+          "widget": {
+            "name": "length"
+          },
+          "link": 694
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "slot_index": 0,
+          "links": [
+            458
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui_essentials",
+        "ver": "1.1.0",
+        "Node name for S&R": "ImageFromBatch+"
+      },
+      "widgets_values": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": 210,
+      "type": "DownloadAndLoadFlorence2Model",
+      "pos": [
+        -1310.571044921875,
+        30.854894638061523
+      ],
+      "size": [
+        365.4000244140625,
+        130
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "lora",
+          "shape": 7,
+          "type": "PEFTLORA",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "florence2_model",
+          "type": "FL2MODEL",
+          "links": [
+            459
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-florence2",
+        "ver": "c9bd1d34eb8689746366d4bb34dfbb195aa8d0e1",
+        "Node name for S&R": "DownloadAndLoadFlorence2Model"
+      },
+      "widgets_values": [
+        "MiaoshouAI/Florence-2-base-PromptGen-v2.0",
+        "fp16",
+        "sdpa",
+        false
+      ]
+    },
+    {
+      "id": 188,
+      "type": "Florence2Run",
+      "pos": [
+        -937.0428466796875,
+        240.8281707763672
+      ],
+      "size": [
+        400,
+        364
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "IMAGE",
+          "link": 458
+        },
+        {
+          "label": "florence2_model",
+          "name": "florence2_model",
+          "type": "FL2MODEL",
+          "link": 459
+        }
+      ],
+      "outputs": [
+        {
+          "label": "image",
+          "name": "image",
+          "type": "IMAGE"
+        },
+        {
+          "label": "mask",
+          "name": "mask",
+          "type": "MASK"
+        },
+        {
+          "label": "caption",
+          "name": "caption",
+          "type": "STRING",
+          "slot_index": 2,
+          "links": [
+            665,
+            693
+          ]
+        },
+        {
+          "label": "data",
+          "name": "data",
+          "type": "JSON"
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-florence2",
+        "ver": "f59d5c34d9c5693473e873dacbedd86857749cf4",
+        "Node name for S&R": "Florence2Run"
+      },
+      "widgets_values": [
+        "",
+        "more_detailed_caption",
+        true,
+        false,
+        4096,
+        3,
+        true,
+        "",
+        77777777777778,
+        "fixed"
+      ]
+    },
+    {
+      "id": 320,
+      "type": "Bjornulf_DisplayNote",
+      "pos": [
+        -365.4273986816406,
+        194.98501586914062
+      ],
+      "size": [
+        236.79998779296875,
+        88
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "any",
+          "type": "*",
+          "link": 665
+        }
+      ],
+      "outputs": [
+        {
+          "name": "any",
+          "type": "*",
+          "links": [
+            691
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "bjornulf_custom_nodes",
+        "ver": "1.1.8",
+        "Node name for S&R": "Bjornulf_DisplayNote"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 329,
+      "type": "PreviewAny",
+      "pos": [
+        -105.36531066894531,
+        208.82644653320312
+      ],
+      "size": [
+        140,
+        76.00001525878906
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source",
+          "type": "*",
+          "link": 691
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.3.43",
+        "Node name for S&R": "PreviewAny"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -2131,6 +2141,14 @@
       220,
       1,
       "STRING"
+    ],
+    [
+      694,
+      295,
+      3,
+      209,
+      1,
+      "INT"
     ]
   ],
   "groups": [
@@ -2164,10 +2182,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.14641000000000023,
+      "scale": 0.6115909044841478,
       "offset": [
-        4706.702652988852,
-        710.6722601930774
+        2004.6519942552904,
+        78.96393443444164
       ]
     },
     "VHS_KeepIntermediate": true,
