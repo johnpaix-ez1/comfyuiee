@@ -49,6 +49,11 @@ import uuid
 import urllib.request
 import urllib.parse
 from PIL import Image
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 import io
 import edge_tts
 from termcolor import colored
@@ -864,96 +869,104 @@ def generate_video_prompts_from_script(script_json, batch_size=5):
         return None
 
     scenes = script_json["scene_sequence"]
-    all_video_prompts = []
+    all_scene_data = [] # Will store dicts: {video_prompt, audio_prompt, negative_audio_prompt, vocals_instruction}
     gemini_model = genai.GenerativeModel("gemini-2.0-flash")
 
     for i in range(0, len(scenes), batch_size):
         batch_scenes = scenes[i:i + batch_size]
-        print(f"Processing batch of {len(batch_scenes)} scenes (scenes {i+1} to {i+len(batch_scenes)})...")
+        print(f"Processing batch of {len(batch_scenes)} scenes for video and audio prompts (scenes {i+1} to {i+len(batch_scenes)})...")
 
-        # Prepare the detailed information for the batch to send to the LLM
-        scenes_for_prompt = []
+        scenes_for_llm_prompt = []
         for idx, scene in enumerate(batch_scenes):
             scene_info = {
-                "original_scene_number": i + idx + 1, # To help LLM keep track
+                "original_scene_number": i + idx + 1,
                 "scene_title": scene.get("scene_title", "Untitled Scene"),
                 "setting": scene.get("setting", "No setting described"),
                 "action": scene.get("action", "No action described"),
-                "dialogue": scene.get("dialogue", [])
+                "dialogue": scene.get("dialogue", []) # Important for deciding on vocals
             }
-            scenes_for_prompt.append(scene_info)
+            scenes_for_llm_prompt.append(scene_info)
 
-        prompt = f"""You are an expert visual storyteller and AI video prompt engineer.
-Given the following batch of scenes from a larger script, generate a single, rich, and descriptive video prompt for EACH scene.
-Each video prompt should vividly describe the visual elements, atmosphere, camera angles (if appropriate), character actions/expressions, and overall mood suitable for generating a short video clip for that specific scene.
-Focus on creating prompts that will result in visually compelling and distinct video outputs for each scene.
+        prompt = f"""You are an expert multimedia prompt engineer for AI content generation.
+Given the following batch of scenes from a larger script, generate a JSON list. Each item in the list should be a JSON object corresponding to one scene, containing:
+1.  `video_prompt`: A rich, descriptive prompt for an AI video generation model. This should vividly describe visual elements, atmosphere, camera angles (if appropriate), character actions/expressions, and overall mood.
+2.  `audio_prompt`: A descriptive prompt for an AI audio generation model like MMAudio (e.g., "a calm ambient soundscape with gentle rain", "energetic electronic music with a strong beat").
+3.  `negative_audio_prompt`: A negative prompt for MMAudio (e.g., "no vocals, no distortion, no loud noises", "avoid harsh sounds").
+4.  `vocals_instruction`: A brief instruction on how dialogue/vocals from the original script should be handled for this scene. Consider the scene's dialogue. Examples: "dialogue_primary", "ambient_sound_primary", "mix_dialogue_with_ambient_sound", "no_dialogue_ambient_only".
 
 The script's overall title is: "{script_json.get('title', 'N/A')}"
 The script's genre is: "{script_json.get('genre', 'N/A')}"
 The script's synopsis is: "{script_json.get('synopsis', 'N/A')}"
 
 Batch of scenes to process:
-{json.dumps(scenes_for_prompt, indent=2)}
+{json.dumps(scenes_for_llm_prompt, indent=2)}
 
-For each scene in the batch provided above, generate one video prompt.
-Return your response as a JSON list of strings, where each string is a video prompt.
-The list should contain exactly {len(scenes_for_prompt)} video prompt strings, one for each scene in the input batch.
-For example, if 3 scenes are in the batch, the output should be:
-["video prompt for scene 1", "video prompt for scene 2", "video prompt for scene 3"]
+Return your response as a single JSON list, where each element is an object containing the four keys: `video_prompt`, `audio_prompt`, `negative_audio_prompt`, and `vocals_instruction`.
+The list should contain exactly {len(scenes_for_llm_prompt)} JSON objects, one for each scene in the input batch.
 
-Ensure the prompts are detailed enough to guide an AI video generation model effectively.
-Return only the JSON list of video prompt strings.
+Example for a single scene object in the list:
+{{
+  "video_prompt": "Dynamic shot of a character running through a neon-lit cyberpunk alleyway during a heavy rainstorm, puddles reflecting the city lights.",
+  "audio_prompt": "tense synthwave music with driving electronic beat, sound of heavy rain and distant sirens",
+  "negative_audio_prompt": "no cheerful music, no birdsong",
+  "vocals_instruction": "dialogue_primary"
+}}
+
+Ensure prompts are detailed and guide AI models effectively. Return only the JSON list of objects.
 """
         try:
-            print(f"Sending request to LLM for batch starting at scene {i+1}...")
+            print(f"Sending request to LLM for video/audio prompts for batch starting at scene {i+1}...")
             response = gemini_model.generate_content(prompt)
 
-            # Debug: Print raw LLM response
-            # print(f"Raw LLM response for batch {i+1}: {response.text}")
-
-            # Attempt to extract JSON list from the response
             response_text = response.text.strip()
-            # Try to find a JSON list (e.g., starting with '[' and ending with ']')
-            match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            # print(f"DEBUG: Raw LLM response for batch {i+1}: {response_text}") # For debugging
+
+            match = re.search(r'\[\s*\{.*\}\s*\]', response_text, re.DOTALL) # Look for a list of objects
+            json_str = ""
             if match:
                 json_str = match.group(0)
-            else:
-                # Fallback if no clear list is found, maybe it's just the list without backticks
-                json_str = response_text
-
-            # Further cleanup if it's wrapped in ```json ... ```
-            json_match_markdown = re.search(r'```json\s*\n(.*?)```', json_str, re.DOTALL)
-            if json_match_markdown:
-                json_str = json_match_markdown.group(1).strip()
-
-            generated_prompts_for_batch = json.loads(json_str)
-
-            if isinstance(generated_prompts_for_batch, list) and all(isinstance(p, str) for p in generated_prompts_for_batch):
-                if len(generated_prompts_for_batch) == len(batch_scenes):
-                    all_video_prompts.extend(generated_prompts_for_batch)
-                    print(f"Successfully generated {len(generated_prompts_for_batch)} video prompts for the batch.")
+            else: # Fallback if ```json ... ``` is used
+                match_markdown = re.search(r'```json\s*\n(.*?)```', response_text, re.DOTALL)
+                if match_markdown:
+                    json_str = match_markdown.group(1).strip()
                 else:
-                    print(f"Warning: LLM returned {len(generated_prompts_for_batch)} prompts, but expected {len(batch_scenes)} for the batch. Using what was returned.")
-                    all_video_prompts.extend(generated_prompts_for_batch) # Or handle error more strictly
+                    json_str = response_text # Last resort
+
+            # print(f"DEBUG: Extracted JSON string for batch {i+1}: {json_str}") # For debugging
+
+            generated_data_for_batch = json.loads(json_str)
+
+            if isinstance(generated_data_for_batch, list) and \
+               all(isinstance(item, dict) and \
+                   "video_prompt" in item and \
+                   "audio_prompt" in item and \
+                   "negative_audio_prompt" in item and \
+                   "vocals_instruction" in item \
+                   for item in generated_data_for_batch):
+
+                if len(generated_data_for_batch) == len(batch_scenes):
+                    all_scene_data.extend(generated_data_for_batch)
+                    print(f"Successfully generated {len(generated_data_for_batch)} video/audio prompt sets for the batch.")
+                else:
+                    print(f"Warning: LLM returned {len(generated_data_for_batch)} prompt sets, but expected {len(batch_scenes)} for the batch. Using what was returned.")
+                    all_scene_data.extend(generated_data_for_batch) # Or handle error more strictly
             else:
-                print(f"Error: LLM response for batch {i+1} was not a list of strings as expected. Response: {generated_prompts_for_batch}")
-                # Potentially skip this batch or retry
+                print(f"Error: LLM response for batch {i+1} was not a list of valid prompt data objects as expected. Response: {generated_data_for_batch}")
 
         except json.JSONDecodeError as e:
-            print(f"Error decoding JSON from LLM response for batch {i+1}: {e}. Response text: {response.text}")
+            print(f"Error decoding JSON from LLM response for batch {i+1}: {e}. Response text was: '{json_str}'")
         except Exception as e:
-            print(f"An error occurred during LLM call for batch {i+1}: {e}")
-            # Optionally, decide if to stop or continue with next batches
+            print(f"An error occurred during LLM call for video/audio prompts for batch {i+1}: {e}")
 
-        if i + batch_size < len(scenes): # If there are more batches to process
+        if i + batch_size < len(scenes):
             print(f"Waiting for 4 seconds before the next LLM call...")
             time.sleep(4)
 
-    if not all_video_prompts:
-        print("No video prompts were generated.")
+    if not all_scene_data:
+        print("No video/audio prompt data was generated.")
         return None
 
-    return all_video_prompts
+    return all_scene_data
 
 
 def download_youtube_video(youtube_link, output_path="/content"):
@@ -1572,22 +1585,23 @@ def await_comfy_job_completion(ws, prompt_id):
 # server_address = "54.80.78.81:8253"
 # client_id = str(uuid.uuid4()) # This should be initialized once per script run ideally.
 
-COMFYUI_WORKFLOW_FILE = "/home/ubuntu/crewgooglegemini/0001comfy2/720workflow003(API).json"
+COMFYUI_WORKFLOW_FILE = "/home/ubuntu/crewgooglegemini/0001comfy2/720workflow003(API).json" # Assumed workflow for video scene generation
 GENERATED_VIDEO_SCENES_DIR = "generated_video_scenes"
 
 
-def run_video_generation_workflow(video_prompts):
+def run_video_generation_workflow(scene_prompts_data):
     """
-    Generates video scenes using ComfyUI for each provided video prompt.
+    Generates video scenes using ComfyUI for each scene's video prompt.
     - Queues all prompts first.
     - Then, monitors and downloads each completed video.
+    - Returns a list of paths to the generated video files.
     """
-    if not video_prompts:
-        print(colored("No video prompts provided to run_video_generation_workflow.", "yellow"))
-        return
+    if not scene_prompts_data:
+        print(colored("No scene data provided to run_video_generation_workflow.", "yellow"))
+        return []
 
     os.makedirs(GENERATED_VIDEO_SCENES_DIR, exist_ok=True)
-    print(colored(f"Ensured '{GENERATED_VIDEO_SCENES_DIR}' directory exists.", "green"))
+    # print(colored(f"Ensured '{GENERATED_VIDEO_SCENES_DIR}' directory exists.", "green")) # Less verbose
 
     # Initialize WebSocket connection (client_id should be managed globally or passed)
     # For now, use the global client_id. This might need refinement if run in threads/processes.
@@ -1606,33 +1620,47 @@ def run_video_generation_workflow(video_prompts):
         print(colored(f"Failed to connect to ComfyUI WebSocket: {e}", "red"))
         return
 
-    queued_jobs = [] # To store (prompt_id, original_video_prompt, scene_index)
+    queued_jobs = [] # To store {"prompt_id": ..., "video_prompt_text": ..., "scene_index": ...}
+    generated_video_paths = [] # To store paths of successfully generated videos
 
-    print(colored(f"Queueing {len(video_prompts)} video generation jobs with ComfyUI...", "cyan"))
-    for i, video_prompt_text in enumerate(video_prompts):
+    print(colored(f"Queueing {len(scene_prompts_data)} video generation jobs with ComfyUI...", "cyan"))
+    for i, scene_data_item in enumerate(scene_prompts_data):
+        video_prompt_text = scene_data_item.get("video_prompt")
+        if not video_prompt_text:
+            print(colored(f"Skipping scene {i+1} due to missing 'video_prompt'. Data: {scene_data_item}", "yellow"))
+            continue
+
         try:
-            workflow = load_workflow(video_prompt_text, "low quality, bad anatomy, text, watermark, signature") # Using generic negative
-            # Assumption: load_workflow correctly loads COMFYUI_WORKFLOW_FILE and inserts prompts.
-            # Node "4" for positive, Node "5" for negative is assumed by load_workflow.
+            # The existing load_workflow takes positive and negative text prompts.
+            # For this step, we only use the video_prompt.
+            # The `load_workflow` in the main script is:
+            #   def load_workflow(positive_prompt, negative_prompt):
+            #       with open("/home/ubuntu/crewgooglegemini/0001comfy2/720workflow003(API).json", "r", encoding="utf-8") as f:
+            #           workflow = json.load(f)
+            #       workflow["4"]["inputs"]["text"] = positive_prompt
+            #       workflow["5"]["inputs"]["text"] = negative_prompt
+            #       return workflow
+            # So, we pass the video_prompt_text as positive, and a generic negative.
+            workflow = load_workflow(video_prompt_text, "text, watermark, signature, bad quality, low resolution")
 
             response = queue_prompt(workflow) # queue_prompt uses global client_id
             if response and 'prompt_id' in response:
                 prompt_id = response['prompt_id']
-                queued_jobs.append({"prompt_id": prompt_id, "prompt_text": video_prompt_text, "scene_index": i})
-                print(colored(f"Queued job for scene {i+1}/{len(video_prompts)}: prompt_id {prompt_id}", "green"))
+                queued_jobs.append({"prompt_id": prompt_id, "video_prompt_text": video_prompt_text, "scene_index": i})
+                # print(colored(f"Queued job for scene {i+1}/{len(scene_prompts_data)}: prompt_id {prompt_id}", "green")) # Less verbose
             else:
                 print(colored(f"Failed to queue job for scene {i+1}. Response: {response}", "red"))
         except Exception as e:
             print(colored(f"Error queueing job for scene {i+1} ('{video_prompt_text[:50]}...'): {e}", "red"))
 
-        time.sleep(0.5) # Small delay between queueing, good practice
+        time.sleep(0.2) # Shorter delay between queueing, as ComfyUI handles a queue.
 
-    print(colored(f"\nAll {len(queued_jobs)} jobs queued. Now awaiting completion and downloading...", "cyan"))
+    print(colored(f"\nAll {len(queued_jobs)} applicable jobs queued. Now awaiting completion and downloading...", "cyan"))
 
     for job_info in queued_jobs:
         prompt_id = job_info["prompt_id"]
-        scene_index = job_info["scene_index"]
-        print(colored(f"Awaiting completion of job for scene {scene_index + 1} (prompt_id: {prompt_id})...", "cyan"))
+        scene_index = job_info["scene_index"] # Original index from scene_prompts_data
+        # print(colored(f"Awaiting completion of job for scene {scene_index + 1} (prompt_id: {prompt_id})...", "cyan")) # Less verbose
 
         completion_success = await_comfy_job_completion(ws, prompt_id) # Pass ws
 
@@ -1662,28 +1690,207 @@ def run_video_generation_workflow(video_prompts):
                     try:
                         with open(output_filepath, "wb") as f:
                             f.write(file_data["content"])
-                        print(colored(f"Successfully saved: {output_filepath}", "blue"))
+                        print(colored(f"Video for scene {scene_index + 1} saved: {output_filepath}", "blue"))
+                        generated_video_paths.append(output_filepath) # Store path
                         saved_file_this_scene = True
-                        # Break if we only expect one video output per scene's prompt_id
-                        break
+                        break # Process only the first valid file for this scene's prompt_id
                     except Exception as e:
-                        print(colored(f"Error saving file {output_filepath}: {e}", "red"))
+                        print(colored(f"Error saving file {output_filepath} for scene {scene_index + 1}: {e}", "red"))
                 if saved_file_this_scene:
-                    break # Move to next job_info if a file was saved for this scene
+                    break
 
             if not saved_file_this_scene:
-                 print(colored(f"No suitable video output file found or saved for prompt_id {prompt_id} (scene {scene_index + 1}). Check ComfyUI output keys/types.", "red"))
-
+                 print(colored(f"No suitable video output file found or saved for prompt_id {prompt_id} (scene {scene_index + 1}).", "red"))
         else:
-            print(colored(f"Job for prompt_id {prompt_id} (scene {scene_index + 1}) failed or was interrupted.", "red"))
+            print(colored(f"Job for prompt_id {prompt_id} (scene {scene_index + 1}) failed, was interrupted, or timed out.", "red"))
 
     try:
         ws.close()
-        print(colored("WebSocket connection closed.", "cyan"))
+        # print(colored("WebSocket connection closed.", "cyan")) # Less verbose
     except Exception as e:
         print(colored(f"Error closing WebSocket: {e}", "yellow"))
 
-    print(colored("run_video_generation_workflow finished.", "green"))
+    if len(generated_video_paths) != len(queued_jobs):
+        print(colored(f"Warning: Expected {len(queued_jobs)} videos, but only {len(generated_video_paths)} were successfully generated and saved.", "yellow"))
+
+    print(colored(f"run_video_generation_workflow finished. {len(generated_video_paths)} videos saved to '{GENERATED_VIDEO_SCENES_DIR}'.", "green"))
+    return generated_video_paths
+
+
+GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR = "generated_video_scenes_with_mmaudio"
+
+def run_mmaudio_enhancement_workflow(video_scene_paths, scene_audio_data_list, mmaudio_workflow_path):
+    """
+    Enhances video scenes with audio using a specified MMAudio ComfyUI workflow.
+
+    Args:
+        video_scene_paths (list): List of file paths to the input video scenes.
+        scene_audio_data_list (list): List of dicts, each with "audio_prompt",
+                                      "negative_audio_prompt", "vocals_instruction".
+        mmaudio_workflow_path (str): Path to the ComfyUI MMAudio workflow JSON file.
+
+    Returns:
+        list: A list of file paths to the audio-enhanced video scenes.
+    """
+    if not video_scene_paths:
+        print(colored("No video scene paths provided for MMAudio enhancement.", "yellow"))
+        return []
+    if len(video_scene_paths) != len(scene_audio_data_list):
+        print(colored(f"Mismatch between number of video paths ({len(video_scene_paths)}) and audio data entries ({len(scene_audio_data_list)}). Aborting MMAudio.", "red"))
+        return []
+
+    os.makedirs(GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR, exist_ok=True)
+
+    global client_id, server_address # Assuming these are set globally
+    if not client_id: client_id = str(uuid.uuid4())
+
+    ws = websocket.WebSocket()
+    ws_url = f"ws://{server_address}/ws?clientId={client_id}"
+    try:
+        ws.connect(ws_url)
+    except Exception as e:
+        print(colored(f"Failed to connect to ComfyUI WebSocket for MMAudio: {e}", "red"))
+        return []
+
+    enhanced_video_paths = []
+
+    print(colored(f"Starting MMAudio enhancement for {len(video_scene_paths)} video scenes...", "cyan"))
+
+    for i, video_path in enumerate(video_scene_paths):
+        if not os.path.exists(video_path):
+            print(colored(f"Video file not found: {video_path}. Skipping MMAudio for scene {i+1}.", "red"))
+            continue
+
+        audio_data = scene_audio_data_list[i]
+        positive_audio_prompt = audio_data.get("audio_prompt", "")
+        negative_audio_prompt = audio_data.get("negative_audio_prompt", "")
+        # vocals_instruction = audio_data.get("vocals_instruction", "") # Not directly used yet unless workflow has a node for it
+
+        print(colored(f"\nProcessing scene {i+1}/{len(video_scene_paths)} for MMAudio: {os.path.basename(video_path)}", "blue"))
+        print(colored(f"  Audio Prompt: {positive_audio_prompt}", "magenta"))
+        print(colored(f"  Negative AP: {negative_audio_prompt}", "magenta"))
+
+        # 1. Upload the video file for the current scene
+        # Using subfolder to keep inputs organized on ComfyUI server side, if supported well by nodes
+        upload_subfolder = "mmaudio_inputs"
+        video_upload_resp = upload_file_to_comfyui(video_path, server_address, subfolder_name=upload_subfolder)
+        if not video_upload_resp or 'name' not in video_upload_resp:
+            print(colored(f"Failed to upload video {video_path} for MMAudio. Skipping scene {i+1}.", "red"))
+            continue
+
+        uploaded_video_name = video_upload_resp['name']
+        if video_upload_resp.get('subfolder'):
+            uploaded_video_name = f"{video_upload_resp['subfolder']}/{uploaded_video_name}"
+
+        # 2. Load and Patch the MMAudio workflow
+        try:
+            with open(mmaudio_workflow_path, "r", encoding="utf-8") as f:
+                workflow = json.load(f)
+        except Exception as e:
+            print(colored(f"Error loading MMAudio workflow '{mmaudio_workflow_path}': {e}. Skipping scene {i+1}.", "red"))
+            continue
+
+        # --- PATCHING LOGIC ---
+        # This is highly dependent on the structure of `vid_mmaudio.json`
+        # User needs to verify these class_types and input field names.
+        video_node_patched = False
+        audio_prompt_node_patched = False
+        neg_audio_prompt_node_patched = False
+
+        for node_id, node_data in workflow.items():
+            # Example: Patching video input node
+            # Common class_types: LoadVideo, LoadVideoUpload, VideoFileInputNode, etc.
+            # Common input fields: video, video_path, filename, file_path
+            if node_data["class_type"] == "LoadVideo" or node_data["class_type"] == "VHS_LoadVideo": # Common custom node names
+                node_data["inputs"]["video"] = uploaded_video_name # Assumes 'video' is the input field
+                video_node_patched = True
+                print(colored(f"  Patched MMAudio video input node '{node_id}' ({node_data['class_type']}) with: {uploaded_video_name}", "green"))
+
+            # Example: Patching positive audio prompt node
+            # Common class_types: PrimitiveNode, StringInputNode, MMAudioPromptNode, etc.
+            # Common input fields: text, string, prompt, positive_prompt
+            # Assuming a node for positive prompt, e.g., one that has a widget named 'text' or 'prompt'
+            # This is a guess; a specific node class_type for prompts is better.
+            if node_data["class_type"] == "CLIPTextEncode" and "text" in node_data["inputs"]: # A common pattern for text inputs
+                 # Check if this node is likely for audio by looking at connected nodes or a conventional title in actual workflow
+                 # For now, this is a placeholder. If MMAudio has specific prompt nodes, use their class_type.
+                 # Let's assume there's a node specifically for the positive audio prompt.
+                 # Placeholder: node_data["_meta"]["title"] == "Positive MMAudio Prompt"
+                 # This requires the user to title their nodes in ComfyUI if we use _meta.title.
+                 # A more robust way is to agree on a specific class_type or specific input name for audio prompts.
+                 # For now, let's assume a specific node ID is known or a unique class_type for MMAudio prompts.
+                 # If we assume node "10" is for positive audio prompt (hypothetical):
+                 if node_id == "10": # HYPOTHETICAL NODE ID FOR POSITIVE AUDIO PROMPT
+                     node_data["inputs"]["text"] = positive_audio_prompt
+                     audio_prompt_node_patched = True
+                     print(colored(f"  Patched positive audio prompt for node '{node_id}' with: {positive_audio_prompt[:50]}...", "green"))
+
+            # Example: Patching negative audio prompt node
+            # Similar assumptions as positive prompt. If node "11" is for negative (hypothetical):
+            if node_id == "11": # HYPOTHETICAL NODE ID FOR NEGATIVE AUDIO PROMPT
+                node_data["inputs"]["text"] = negative_audio_prompt
+                neg_audio_prompt_node_patched = True
+                print(colored(f"  Patched negative audio prompt for node '{node_id}' with: {negative_audio_prompt[:50]}...", "green"))
+
+        if not video_node_patched:
+            print(colored("  Warning: Could not find or patch the video input node in MMAudio workflow. Please check class_type/input field.", "yellow"))
+        if not audio_prompt_node_patched:
+            print(colored("  Warning: Could not find or patch the positive audio prompt node. Please check class_type/input field or node ID.", "yellow"))
+        # Negative prompt is optional, so less critical if not patched.
+
+        # 3. Queue the MMAudio job
+        mmaudio_response = queue_prompt(workflow) # Uses global client_id
+        if not mmaudio_response or 'prompt_id' not in mmaudio_response:
+            print(colored(f"Failed to queue MMAudio job for scene {i+1}. Response: {mmaudio_response}", "red"))
+            continue
+
+        mmaudio_prompt_id = mmaudio_response['prompt_id']
+        print(colored(f"  Queued MMAudio job for scene {i+1}: prompt_id {mmaudio_prompt_id}", "green"))
+
+        # 4. Monitor and Download
+        print(colored(f"  Awaiting MMAudio completion for prompt_id: {mmaudio_prompt_id}...", "cyan"))
+        mmaudio_completion_success = await_comfy_job_completion(ws, mmaudio_prompt_id)
+
+        if mmaudio_completion_success:
+            print(colored(f"  MMAudio job {mmaudio_prompt_id} (scene {i+1}) completed. Fetching output...", "green"))
+            output_files_map = get_comfy_output_files_data(mmaudio_prompt_id)
+
+            saved_enhanced_video = False
+            for node_id_out, files_list_out in output_files_map.items():
+                for file_data_out in files_list_out:
+                    file_extension_out = ".mp4"
+                    if '.' in file_data_out['filename']:
+                        file_extension_out = "." + file_data_out['filename'].split('.')[-1]
+
+                    # Assume the output is a video file
+                    output_filename_enhanced = f"scene_{i+1:03d}_mmaudio{file_extension_out}"
+                    output_filepath_enhanced = os.path.join(GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR, output_filename_enhanced)
+                    try:
+                        with open(output_filepath_enhanced, "wb") as f:
+                            f.write(file_data_out["content"])
+                        print(colored(f"  Successfully saved MMAudio enhanced video: {output_filepath_enhanced}", "blue"))
+                        enhanced_video_paths.append(output_filepath_enhanced)
+                        saved_enhanced_video = True
+                        break
+                    except Exception as e:
+                        print(colored(f"  Error saving MMAudio enhanced file {output_filepath_enhanced}: {e}", "red"))
+                if saved_enhanced_video:
+                    break
+
+            if not saved_enhanced_video:
+                 print(colored(f"  No suitable output video found or saved from MMAudio job {mmaudio_prompt_id} (scene {i+1}).", "red"))
+        else:
+            print(colored(f"  MMAudio job for prompt_id {mmaudio_prompt_id} (scene {i+1}) failed or was interrupted.", "red"))
+
+        time.sleep(1) # Small delay between processing each scene for MMAudio
+
+    try:
+        ws.close()
+    except Exception as e:
+        print(colored(f"Error closing WebSocket after MMAudio: {e}", "yellow"))
+
+    print(colored(f"MMAudio enhancement workflow finished. {len(enhanced_video_paths)} videos processed and saved to '{GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR}'.", "green"))
+    return enhanced_video_paths
 
 
 def process_and_generate_images():
@@ -1782,6 +1989,89 @@ def queue_prompt(workflow):
     except Exception as e:
         print(colored(f"Error sending prompt: {e}", "red"))
         return {}
+
+def upload_file_to_comfyui(local_file_path, server_address_param, subfolder_name=None, file_type="input"):
+    """
+    Uploads a file to the ComfyUI server via HTTP API.
+
+    Args:
+        local_file_path (str): The path to the local file to upload.
+        server_address_param (str): The ComfyUI server address (e.g., "127.0.0.1:8188").
+        subfolder_name (str, optional): The name of the subfolder on the ComfyUI server
+                                        within the 'input' directory. Defaults to None.
+        file_type (str, optional): The type of file for ComfyUI (e.g., 'input', 'temp').
+                                   This often determines the root directory on the server.
+                                   The API seems to use `type` for subfolder context too.
+
+    Returns:
+        dict: The JSON response from ComfyUI (e.g., {'name': 'filename.ext',
+              'subfolder': 'subfolder_name_if_any', 'type': 'input'})
+              or None if upload fails.
+    """
+    url = f"http://{server_address_param}/upload/image" # Endpoint seems generic
+    filename = os.path.basename(local_file_path)
+
+    files_payload = {'image': (filename, open(local_file_path, 'rb'))}
+
+    data_payload = {'overwrite': 'true'} # Allow overwriting existing files
+    if subfolder_name:
+        data_payload['subfolder'] = subfolder_name
+    # The 'type' (e.g. 'input', 'temp') is sometimes used by ComfyUI to determine
+    # the root directory for the subfolder. The /upload/image endpoint itself
+    # might implicitly use 'input' or allow 'type' to be specified here.
+    # For file inputs to nodes, 'input' is typical.
+    data_payload['type'] = file_type
+
+    print(colored(f"Uploading '{local_file_path}' to ComfyUI ({url}) with data: {data_payload}", "cyan"))
+
+    try:
+        if HAS_REQUESTS:
+            resp = requests.post(url, files=files_payload, data=data_payload, timeout=60) # Increased timeout for larger files
+            resp.raise_for_status()
+            response_json = resp.json()
+        else:
+            # Fallback to urllib (adapted from user's example)
+            import mimetypes
+            boundary = "----WebKitFormBoundary" + os.urandom(16).hex()
+
+            body_parts = []
+            # Add data fields (overwrite, subfolder, type)
+            for key, value in data_payload.items():
+                body_parts.append(f"--{boundary}".encode('utf-8'))
+                body_parts.append(f'Content-Disposition: form-data; name="{key}"\r\n'.encode('utf-8'))
+                body_parts.append(value.encode('utf-8'))
+
+            # Add file field
+            body_parts.append(f"--{boundary}".encode('utf-8'))
+            content_type = mimetypes.guess_type(local_file_path)[0] or "application/octet-stream"
+            file_header = f'Content-Disposition: form-data; name="image"; filename="{filename}"\r\n' \
+                          f'Content-Type: {content_type}\r\n'
+            body_parts.append(file_header.encode('utf-8'))
+
+            with open(local_file_path, "rb") as f:
+                filedata = f.read()
+            body_parts.append(filedata)
+
+            body_parts.append(f"--{boundary}--".encode("utf-8"))
+
+            final_body = b"\r\n".join(body_parts)
+
+            headers = {
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Content-Length": str(len(final_body)),
+            }
+            req = urllib.request.Request(url, data=final_body, headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=60) as response: # Increased timeout
+                response_json = json.loads(response.read().decode())
+
+        print(colored(f"Successfully uploaded '{filename}'. Server response: {response_json}", "green"))
+        return response_json
+
+    except Exception as e:
+        print(colored(f"Error uploading file '{local_file_path}' to ComfyUI: {e}", "red"))
+        if HAS_REQUESTS and 'resp' in locals() and hasattr(resp, 'text'):
+            print(colored(f"Server error response: {resp.text}", "red"))
+        return None
 
 import os
 from moviepy.editor import ImageClip
@@ -3231,25 +3521,41 @@ async def run_full_pipeline(new_video_title, script, transcript_text=None):
     if transcript_text: # This is the original transcript from YouTube video, if applicable
         log_transcript(transcript_text, new_video_title)
 
-    # The 'script' variable here is assumed to be the script_json object
-    # containing "scene_sequence", as produced by generate_script_from_video.
-    # If it's just a string (e.g. from generate_biblical_script), the new functions won't work as intended.
-    script_json = script # Assuming script is the full JSON object with scene_sequence
+    # The 'script' variable here is assumed to be the script_json object (output of generate_script_from_video)
+    # or a simple script text string (output of generate_biblical_script).
+    script_input_arg = script # Keep original 'script' arg for clarity in this scope
 
     print(f"Running media pipeline for: {new_video_title}")
-    print(colored("Step A: Generating video prompts from script...", "blue"))
-    video_prompts = generate_video_prompts_from_script(script_json)
+    print(colored("Step A: Generating video and audio prompts from script...", "blue"))
 
-    if video_prompts:
-        print(colored(f"Successfully generated {len(video_prompts)} video prompts.", "green"))
-        print(colored("Step B: Running video generation workflow for generated prompts...", "blue"))
-        run_video_generation_workflow(video_prompts)
-        print(colored("Video generation workflow completed. Scene videos should be in 'generated_video_scenes'.", "green"))
+    # generate_video_prompts_from_script expects script_json (a dict with scene_sequence)
+    # If script_input_arg is just text (e.g. from biblical_script), this step will be skipped by generate_video_prompts_from_script
+    scene_prompts_data = generate_video_prompts_from_script(script_input_arg)
+
+    video_scene_paths = []
+    if scene_prompts_data:
+        print(colored(f"Successfully generated {len(scene_prompts_data)} sets of video/audio prompts.", "green"))
+
+        print(colored("Step B: Running video scene generation workflow...", "blue"))
+        # run_video_generation_workflow expects a list of dicts, and uses item['video_prompt']
+        video_scene_paths = run_video_generation_workflow(scene_prompts_data)
+        if video_scene_paths:
+            print(colored(f"Video scene generation completed. {len(video_scene_paths)} raw scenes in '{GENERATED_VIDEO_SCENES_DIR}'.", "green"))
+
+            print(colored("Step C: Running MMAudio enhancement workflow...", "blue"))
+            MMAUDIO_WORKFLOW_JSON_PATH = "/home/ubuntu/crewgooglegemini/0001comfy2/vid_mmaudio.json" # As per user info
+            # Ensure scene_prompts_data (which contains audio_prompt etc.) is passed correctly
+            enhanced_video_paths = run_mmaudio_enhancement_workflow(video_scene_paths, scene_prompts_data, MMAUDIO_WORKFLOW_JSON_PATH)
+            if enhanced_video_paths:
+                 print(colored(f"MMAudio enhancement completed. {len(enhanced_video_paths)} scenes in '{GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR}'.", "green"))
+            else:
+                print(colored("MMAudio enhancement failed or produced no videos.", "red"))
+        else:
+            print(colored("Video scene generation failed or produced no videos. Skipping MMAudio.", "red"))
     else:
-        print(colored("Failed to generate video prompts. Skipping ComfyUI video scene generation.", "red"))
+        print(colored("Failed to generate video/audio prompts. Skipping video scene generation and MMAudio.", "red"))
 
-    # The original plan mentioned using output from generate_script_from_video for the new functions.
-    # The 'script' variable passed to run_full_pipeline IS this output when coming from Option 3's path.
+    # The 'script_input_arg' (which was the original 'script' parameter) is used to determine the text for TTS.
     # For Option 4 (generate_biblical_script), 'script' is just text.
     # The new video scene generation will effectively run if script_json is valid and contains scene_sequence.
 
