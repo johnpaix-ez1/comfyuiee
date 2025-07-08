@@ -3031,14 +3031,24 @@ async def main():
                         os.remove(downloaded_video_path)
         
                 if transcript_text and isinstance(transcript_text, str):
+                    new_video_title, script_for_pipeline = None, None # Initialize
                     try:
-                        new_video_title, script = generate_script_from_video(transcript_text)
+                        script_json_output = generate_script_from_video(transcript_text) # Get the whole dict
+                        if script_json_output and "title" in script_json_output:
+                            new_video_title = script_json_output["title"]
+                            # The 'script' argument for run_full_pipeline should be the full script_json_output
+                            # as generate_video_prompts_from_script inside run_full_pipeline expects it.
+                            script_for_pipeline = script_json_output
+                        else:
+                            print(colored(f"Failed to generate valid script JSON or title from transcript: {transcript_text[:100]}...", "red"))
+                            # new_video_title, script_for_pipeline remain None
+
                     except Exception as e:
-                        print(f"Error generating script: {e}")
-                        continue
+                        print(colored(f"Error generating or processing script from video transcript: {e}", "red"))
+                        # new_video_title, script_for_pipeline remain None
         
-                    if new_video_title and script:
-                        await run_full_pipeline(new_video_title, script, transcript_text=transcript_text)
+                    if new_video_title and script_for_pipeline:
+                        await run_full_pipeline(new_video_title, script_for_pipeline, transcript_text=transcript_text)
                         # Move processed link to Usedlinks.txt and remove from shortsnewlinks.txt
                         if os.path.exists(link_path):
                             with open(link_path, 'r') as file:
