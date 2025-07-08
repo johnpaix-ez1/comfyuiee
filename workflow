@@ -847,6 +847,115 @@ Return only the JSON object — no explanation, no extra comments.
         return None
 
 
+def generate_video_prompts_from_script(script_json, batch_size=5):
+    """
+    Processes a script_json to generate rich, descriptive video prompts for each scene
+    using an LLM, in batches with delays.
+
+    Args:
+        script_json (dict): The script object from generate_script_from_video.
+        batch_size (int): Number of scenes to process in each LLM call.
+
+    Returns:
+        list: A list of generated video prompts (strings), or None if an error occurs.
+    """
+    if not script_json or "scene_sequence" not in script_json:
+        print("Error: Invalid script_json or missing 'scene_sequence'.")
+        return None
+
+    scenes = script_json["scene_sequence"]
+    all_video_prompts = []
+    gemini_model = genai.GenerativeModel("gemini-2.0-flash")
+
+    for i in range(0, len(scenes), batch_size):
+        batch_scenes = scenes[i:i + batch_size]
+        print(f"Processing batch of {len(batch_scenes)} scenes (scenes {i+1} to {i+len(batch_scenes)})...")
+
+        # Prepare the detailed information for the batch to send to the LLM
+        scenes_for_prompt = []
+        for idx, scene in enumerate(batch_scenes):
+            scene_info = {
+                "original_scene_number": i + idx + 1, # To help LLM keep track
+                "scene_title": scene.get("scene_title", "Untitled Scene"),
+                "setting": scene.get("setting", "No setting described"),
+                "action": scene.get("action", "No action described"),
+                "dialogue": scene.get("dialogue", [])
+            }
+            scenes_for_prompt.append(scene_info)
+
+        prompt = f"""You are an expert visual storyteller and AI video prompt engineer.
+Given the following batch of scenes from a larger script, generate a single, rich, and descriptive video prompt for EACH scene.
+Each video prompt should vividly describe the visual elements, atmosphere, camera angles (if appropriate), character actions/expressions, and overall mood suitable for generating a short video clip for that specific scene.
+Focus on creating prompts that will result in visually compelling and distinct video outputs for each scene.
+
+The script's overall title is: "{script_json.get('title', 'N/A')}"
+The script's genre is: "{script_json.get('genre', 'N/A')}"
+The script's synopsis is: "{script_json.get('synopsis', 'N/A')}"
+
+Batch of scenes to process:
+{json.dumps(scenes_for_prompt, indent=2)}
+
+For each scene in the batch provided above, generate one video prompt.
+Return your response as a JSON list of strings, where each string is a video prompt.
+The list should contain exactly {len(scenes_for_prompt)} video prompt strings, one for each scene in the input batch.
+For example, if 3 scenes are in the batch, the output should be:
+["video prompt for scene 1", "video prompt for scene 2", "video prompt for scene 3"]
+
+Ensure the prompts are detailed enough to guide an AI video generation model effectively.
+Return only the JSON list of video prompt strings.
+"""
+        try:
+            print(f"Sending request to LLM for batch starting at scene {i+1}...")
+            response = gemini_model.generate_content(prompt)
+
+            # Debug: Print raw LLM response
+            # print(f"Raw LLM response for batch {i+1}: {response.text}")
+
+            # Attempt to extract JSON list from the response
+            response_text = response.text.strip()
+            # Try to find a JSON list (e.g., starting with '[' and ending with ']')
+            match = re.search(r'\[.*\]', response_text, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+            else:
+                # Fallback if no clear list is found, maybe it's just the list without backticks
+                json_str = response_text
+
+            # Further cleanup if it's wrapped in ```json ... ```
+            json_match_markdown = re.search(r'```json\s*\n(.*?)```', json_str, re.DOTALL)
+            if json_match_markdown:
+                json_str = json_match_markdown.group(1).strip()
+
+            generated_prompts_for_batch = json.loads(json_str)
+
+            if isinstance(generated_prompts_for_batch, list) and all(isinstance(p, str) for p in generated_prompts_for_batch):
+                if len(generated_prompts_for_batch) == len(batch_scenes):
+                    all_video_prompts.extend(generated_prompts_for_batch)
+                    print(f"Successfully generated {len(generated_prompts_for_batch)} video prompts for the batch.")
+                else:
+                    print(f"Warning: LLM returned {len(generated_prompts_for_batch)} prompts, but expected {len(batch_scenes)} for the batch. Using what was returned.")
+                    all_video_prompts.extend(generated_prompts_for_batch) # Or handle error more strictly
+            else:
+                print(f"Error: LLM response for batch {i+1} was not a list of strings as expected. Response: {generated_prompts_for_batch}")
+                # Potentially skip this batch or retry
+
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON from LLM response for batch {i+1}: {e}. Response text: {response.text}")
+        except Exception as e:
+            print(f"An error occurred during LLM call for batch {i+1}: {e}")
+            # Optionally, decide if to stop or continue with next batches
+
+        if i + batch_size < len(scenes): # If there are more batches to process
+            print(f"Waiting for 4 seconds before the next LLM call...")
+            time.sleep(4)
+
+    if not all_video_prompts:
+        print("No video prompts were generated.")
+        return None
+
+    return all_video_prompts
+
+
 def download_youtube_video(youtube_link, output_path="/content"):
     # Define an output template with a shorter filename
     output_template = os.path.join(output_path, "%(title).50s-%(id)s.%(ext)s")
@@ -1301,18 +1410,18 @@ def confirm_action(message):
     print(colored(f"Generated Client ID: {client_id}", "magenta"))
 
 
-
-
-def get_image(filename, subfolder, folder_type):
+# Renamed from get_image to be more generic for file types
+def get_comfy_output_file(filename, subfolder, folder_type):
+    """Fetches a file (image, video, etc.) from the ComfyUI server."""
     data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
     url_values = urllib.parse.urlencode(data)
 
-    print(colored(f"Fetching image from the server: {server_address}/view", "cyan"))
+    # print(colored(f"Fetching file '{filename}' from ComfyUI server: http://{server_address}/view?{url_values}", "cyan"))
     with urllib.request.urlopen(f"http://{server_address}/view?{url_values}") as response:
         return response.read()
 
 def get_history(prompt_id):
-    print(colored(f"Fetching history for prompt ID: {prompt_id}.", "cyan"))
+    # print(colored(f"Fetching history for prompt ID: {prompt_id}.", "cyan"))
     with urllib.request.urlopen(f"http://{server_address}/history/{prompt_id}") as response:
         return json.loads(response.read())
 
@@ -1324,25 +1433,69 @@ def reconnect_websocket():
     ws.connect(ws_url)
     return ws
 
-def get_output_images(prompt_id):
-    output_images = {}
-    history = get_history(prompt_id)[prompt_id]
-    for node_id in history['outputs']:
-        node_output = history['outputs'][node_id]
-        if 'images' in node_output:
-            images_output = []
-            for image in node_output['images']:
-                print(colored(f"Downloading image: {image['filename']} from the server.", "yellow"))
-                image_data = get_image(image['filename'], image['subfolder'], image['type'])
-                images_output.append(image_data)
-            output_images[node_id] = images_output
-    return output_images
-#==================================================================
-#REVISED OF THE BELOW
+# Renamed from get_output_images and adapted to be more generic
+def get_comfy_output_files_data(prompt_id):
+    """
+    Retrieves file data (images, videos, etc.) for a completed ComfyUI prompt.
+    It expects the output node to contain a list of files, e.g., 'gifs', 'videos', or 'images'.
+    """
+    files_data = {}
+    history = get_history(prompt_id) # Get full history
+    if prompt_id not in history:
+        print(colored(f"Error: Prompt ID {prompt_id} not found in history.", "red"))
+        return files_data
+
+    prompt_history = history[prompt_id]
+
+    for node_id in prompt_history.get('outputs', {}):
+        node_output = prompt_history['outputs'][node_id]
+        # Check for common output keys that might contain files
+        # Common keys could be 'images', 'gifs', 'videos', etc.
+        # For this task, we are expecting video files. Let's assume they might be under a 'videos' key
+        # or a generic 'files' key. If it's images that are then turned to video by the workflow,
+        # it might still be 'images'.
+
+        output_key_to_check = None
+        if 'videos' in node_output: # Ideal case for video output
+            output_key_to_check = 'videos'
+        elif 'gifs' in node_output: # Animated gifs might be an output
+             output_key_to_check = 'gifs'
+        elif 'images' in node_output: # Fallback if it's images to be animated later
+            output_key_to_check = 'images'
+        elif 'files' in node_output: # A generic file output
+            output_key_to_check = 'files'
+
+        if output_key_to_check and isinstance(node_output[output_key_to_check], list):
+            collected_files = []
+            for file_info in node_output[output_key_to_check]:
+                if 'filename' in file_info and 'subfolder' in file_info and 'type' in file_info:
+                    # print(colored(f"Found file '{file_info['filename']}' in node {node_id}. Type: {file_info['type']}", "yellow"))
+                    try:
+                        file_content = get_comfy_output_file(file_info['filename'], file_info['subfolder'], file_info['type'])
+                        collected_files.append({
+                            "filename": file_info['filename'],
+                            "content": file_content,
+                            "type": file_info['type']
+                        })
+                    except Exception as e:
+                        print(colored(f"Error downloading file {file_info['filename']}: {e}", "red"))
+                else:
+                    print(colored(f"Warning: File info in node {node_id} is incomplete: {file_info}", "yellow"))
+            if collected_files:
+                files_data[node_id] = collected_files
+    if not files_data:
+        print(colored(f"No output files found in history for prompt_id {prompt_id}. Searched for 'videos', 'gifs', 'images', 'files' keys in output nodes.", "yellow"))
+        # print(colored(f"Full history output for prompt {prompt_id}: {json.dumps(prompt_history.get('outputs',{}), indent=2)}", "magenta"))
+
+    return files_data
 
 
-def generate_images(ws, prompt_id):
-    output_images = {}
+# Renamed from generate_images and adapted
+def await_comfy_job_completion(ws, prompt_id):
+    """
+    Monitors a ComfyUI job via WebSocket until completion.
+    Returns True if execution completes successfully, False otherwise.
+    """
     last_reported_percentage = 0
     timeout = 30
 
@@ -1362,21 +1515,176 @@ def generate_images(ws, prompt_id):
                         last_reported_percentage = percentage
                 elif message['type'] == 'executing':
                     data = message['data']
-                    if data['node'] is None and data['prompt_id'] == prompt_id:
-                        print(colored("Execution complete.", "green"))
-                        return get_output_images(prompt_id)
+                    if data['node'] is None and data['prompt_id'] == prompt_id: # Execution complete for this prompt
+                        # print(colored(f"Execution complete for prompt_id: {prompt_id}", "green"))
+                        return True # Indicate successful completion
+                elif message['type'] == 'status': # Other status messages
+                    # print(colored(f"Status for prompt {prompt_id}: {message['data']}", "grey"))
+                    pass
+                elif message['type'] == 'execution_error':
+                    print(colored(f"Execution error for prompt {prompt_id}: {message['data']}", "red"))
+                    return False # Indicate error
+                elif message['type'] == 'execution_interrupted':
+                    print(colored(f"Execution interrupted for prompt {prompt_id}: {message['data']}", "red"))
+                    return False # Indicate error
+
+
         except WebSocketTimeoutException:
-            print(colored(f"No message received for {timeout} seconds. Checking connection...", "yellow"))
+            print(colored(f"Timeout waiting for ComfyUI response for prompt {prompt_id}. Reconnecting...", "yellow"))
             try:
-                ws.ping()
+                ws.ping() # Check if connection is still alive
+            except: # If ping fails, WebSocket is likely closed
+                print(colored("WebSocket connection lost. Attempting to reconnect...", "red"))
+                try:
+                    ws.close() # Ensure old ws is closed
+                except:
+                    pass
+                ws = reconnect_websocket() # This global ws needs to be the one used by the caller
+                                           # This is problematic if ws is passed by value.
+                                           # For now, assume reconnect_websocket updates a global or class instance if used like that.
+                                           # Or, this function should return the new ws.
+                                           # For simplicity here, let's assume it might raise an error if reconnect fails.
+                print(colored("Reconnected. Will retry receiving for current prompt if possible, or fail.", "yellow"))
+                # Note: True state recovery after reconnect for a specific prompt is complex with current ComfyUI API.
+                # Usually, you'd have to re-check history or re-queue.
+                # For this function, a timeout might mean the job is stuck or server is unresponsive.
+            # We might want to break or return False after a certain number of timeouts.
+            # For now, it will keep trying indefinitely on timeout if ping succeeds.
+
+        except WebSocketConnectionClosedException:
+            print(colored(f"WebSocket connection closed unexpectedly for prompt {prompt_id}. Attempting to reconnect...", "red"))
+            try:
+                ws.close()
             except:
-                ws = reconnect_websocket()
+                pass
+            ws = reconnect_websocket() # Similar issue as above with ws instance.
+            print(colored("Reconnected. Will retry receiving for current prompt if possible, or fail.", "yellow"))
 
-    return output_images
+        except Exception as e:
+            print(colored(f"Error receiving message from ComfyUI for prompt {prompt_id}: {e}", "red"))
+            return False # Indicate error
+
+    # Should not be reached if loop is truly infinite on recv, but as a fallback:
+    return False
 
 
-server_address = "54.80.78.81:8253"
-client_id = str(uuid.uuid4())
+# Global server_address and client_id are assumed to be defined as they are used by helper functions.
+# server_address = "54.80.78.81:8253"
+# client_id = str(uuid.uuid4()) # This should be initialized once per script run ideally.
+
+COMFYUI_WORKFLOW_FILE = "/home/ubuntu/crewgooglegemini/0001comfy2/720workflow003(API).json"
+GENERATED_VIDEO_SCENES_DIR = "generated_video_scenes"
+
+
+def run_video_generation_workflow(video_prompts):
+    """
+    Generates video scenes using ComfyUI for each provided video prompt.
+    - Queues all prompts first.
+    - Then, monitors and downloads each completed video.
+    """
+    if not video_prompts:
+        print(colored("No video prompts provided to run_video_generation_workflow.", "yellow"))
+        return
+
+    os.makedirs(GENERATED_VIDEO_SCENES_DIR, exist_ok=True)
+    print(colored(f"Ensured '{GENERATED_VIDEO_SCENES_DIR}' directory exists.", "green"))
+
+    # Initialize WebSocket connection (client_id should be managed globally or passed)
+    # For now, use the global client_id. This might need refinement if run in threads/processes.
+    global client_id
+    if not client_id: # Initialize if not already set (e.g. by process_and_generate_images)
+        client_id = str(uuid.uuid4())
+        print(colored(f"Initialized global client_id for ComfyUI: {client_id}", "magenta"))
+
+    ws = websocket.WebSocket()
+    ws_url = f"ws://{server_address}/ws?clientId={client_id}"
+    try:
+        print(colored(f"Connecting to ComfyUI WebSocket: {ws_url}", "cyan"))
+        ws.connect(ws_url)
+        print(colored("Successfully connected to ComfyUI WebSocket.", "green"))
+    except Exception as e:
+        print(colored(f"Failed to connect to ComfyUI WebSocket: {e}", "red"))
+        return
+
+    queued_jobs = [] # To store (prompt_id, original_video_prompt, scene_index)
+
+    print(colored(f"Queueing {len(video_prompts)} video generation jobs with ComfyUI...", "cyan"))
+    for i, video_prompt_text in enumerate(video_prompts):
+        try:
+            workflow = load_workflow(video_prompt_text, "low quality, bad anatomy, text, watermark, signature") # Using generic negative
+            # Assumption: load_workflow correctly loads COMFYUI_WORKFLOW_FILE and inserts prompts.
+            # Node "4" for positive, Node "5" for negative is assumed by load_workflow.
+
+            response = queue_prompt(workflow) # queue_prompt uses global client_id
+            if response and 'prompt_id' in response:
+                prompt_id = response['prompt_id']
+                queued_jobs.append({"prompt_id": prompt_id, "prompt_text": video_prompt_text, "scene_index": i})
+                print(colored(f"Queued job for scene {i+1}/{len(video_prompts)}: prompt_id {prompt_id}", "green"))
+            else:
+                print(colored(f"Failed to queue job for scene {i+1}. Response: {response}", "red"))
+        except Exception as e:
+            print(colored(f"Error queueing job for scene {i+1} ('{video_prompt_text[:50]}...'): {e}", "red"))
+
+        time.sleep(0.5) # Small delay between queueing, good practice
+
+    print(colored(f"\nAll {len(queued_jobs)} jobs queued. Now awaiting completion and downloading...", "cyan"))
+
+    for job_info in queued_jobs:
+        prompt_id = job_info["prompt_id"]
+        scene_index = job_info["scene_index"]
+        print(colored(f"Awaiting completion of job for scene {scene_index + 1} (prompt_id: {prompt_id})...", "cyan"))
+
+        completion_success = await_comfy_job_completion(ws, prompt_id) # Pass ws
+
+        if completion_success:
+            print(colored(f"Job {prompt_id} (scene {scene_index + 1}) completed. Fetching output files...", "green"))
+            output_files_map = get_comfy_output_files_data(prompt_id) # Fetches content
+
+            saved_file_this_scene = False
+            for node_id, files_list in output_files_map.items():
+                for file_data in files_list:
+                    # We expect video files. Extension might be in filename or we guess.
+                    # Example: save first video file found for the scene.
+                    # filename could be like "ComfyUI_00001-.mp4"
+                    file_extension = ".mp4" # Default, try to get from filename if possible
+                    if '.' in file_data['filename']:
+                        file_extension = "." + file_data['filename'].split('.')[-1]
+
+                    # Prioritize .mp4 or other common video formats if type is generic like 'output'
+                    if file_data['type'] == 'output' and file_extension not in ['.mp4', '.webm', '.mkv', '.gif']:
+                        # If type is just 'output' and extension isn't video-like, it might be an image preview or other data.
+                        # print(colored(f"Skipping non-video-like output file '{file_data['filename']}' for scene {scene_index + 1}", "yellow"))
+                        # continue # Only save if it looks like a video
+                        pass # For now, let's try to save it anyway and see.
+
+                    output_filename = f"scene_{scene_index + 1:03d}{file_extension}"
+                    output_filepath = os.path.join(GENERATED_VIDEO_SCENES_DIR, output_filename)
+                    try:
+                        with open(output_filepath, "wb") as f:
+                            f.write(file_data["content"])
+                        print(colored(f"Successfully saved: {output_filepath}", "blue"))
+                        saved_file_this_scene = True
+                        # Break if we only expect one video output per scene's prompt_id
+                        break
+                    except Exception as e:
+                        print(colored(f"Error saving file {output_filepath}: {e}", "red"))
+                if saved_file_this_scene:
+                    break # Move to next job_info if a file was saved for this scene
+
+            if not saved_file_this_scene:
+                 print(colored(f"No suitable video output file found or saved for prompt_id {prompt_id} (scene {scene_index + 1}). Check ComfyUI output keys/types.", "red"))
+
+        else:
+            print(colored(f"Job for prompt_id {prompt_id} (scene {scene_index + 1}) failed or was interrupted.", "red"))
+
+    try:
+        ws.close()
+        print(colored("WebSocket connection closed.", "cyan"))
+    except Exception as e:
+        print(colored(f"Error closing WebSocket: {e}", "yellow"))
+
+    print(colored("run_video_generation_workflow finished.", "green"))
+
 
 def process_and_generate_images():
     output_dir = "/home/ubuntu/crewgooglegemini/0001comfy2/outputs"
@@ -2920,12 +3228,66 @@ async def main():
             break
 
 async def run_full_pipeline(new_video_title, script, transcript_text=None):
-    if transcript_text:
+    if transcript_text: # This is the original transcript from YouTube video, if applicable
         log_transcript(transcript_text, new_video_title)
-    print(f"Running media pipeline for: {new_video_title}")
 
-    # Save script for image prompt context
+    # The 'script' variable here is assumed to be the script_json object
+    # containing "scene_sequence", as produced by generate_script_from_video.
+    # If it's just a string (e.g. from generate_biblical_script), the new functions won't work as intended.
+    script_json = script # Assuming script is the full JSON object with scene_sequence
+
+    print(f"Running media pipeline for: {new_video_title}")
+    print(colored("Step A: Generating video prompts from script...", "blue"))
+    video_prompts = generate_video_prompts_from_script(script_json)
+
+    if video_prompts:
+        print(colored(f"Successfully generated {len(video_prompts)} video prompts.", "green"))
+        print(colored("Step B: Running video generation workflow for generated prompts...", "blue"))
+        run_video_generation_workflow(video_prompts)
+        print(colored("Video generation workflow completed. Scene videos should be in 'generated_video_scenes'.", "green"))
+    else:
+        print(colored("Failed to generate video prompts. Skipping ComfyUI video scene generation.", "red"))
+
+    # The original plan mentioned using output from generate_script_from_video for the new functions.
+    # The 'script' variable passed to run_full_pipeline IS this output when coming from Option 3's path.
+    # For Option 4 (generate_biblical_script), 'script' is just text.
+    # The new video scene generation will effectively run if script_json is valid and contains scene_sequence.
+
+    # Existing workflow continues below.
+    # Note: The generated_video_scenes are NOT YET USED by the subsequent steps.
+    # This will require further modification of how video_clips are sourced later.
+
+    # Save script (text part) for image prompt context (original image generation) and other uses
+    script_text_for_image_prompts_and_tts = ""
+    if isinstance(script_json, dict) and "script" in script_json: # If script_json is from generate_biblical_script like format
+        script_text_for_image_prompts_and_tts = script_json["script"]
+    elif isinstance(script_json, dict) and "scene_sequence" in script_json: # If script_json is from generate_script_from_video
+        # Concatenate dialogue or actions from scenes to form a cohesive script text if needed for TTS
+        # For now, let's assume the main "script" for TTS is derived differently or handled by existing logic.
+        # The user might want to generate TTS from the `dialogue` in `scene_sequence`.
+        # For simplicity, if a top-level "script" field isn't in script_json, we might need user clarification
+        # on what text to use for TTS and existing image prompt generation.
+        # Let's check if the 'script' variable itself was the text (from biblical) or the dict.
+        if isinstance(script, str): # This was likely from generate_biblical_script
+             script_text_for_image_prompts_and_tts = script
+        else: # It was a dict, try to extract a coherent text for TTS if possible.
+            # This part is a bit ambiguous based on current plan.
+            # The plan focuses on *video scene* generation from *video prompts* derived from *script scenes*.
+            # It doesn't specify how the *audio narration/TTS script* is affected.
+            # Let's assume for now that the 'script' variable passed to run_full_pipeline
+            # is the text intended for TTS if it's a string.
+            # If it's a dict from generate_script_from_video, the existing logic might use its 'synopsis' or join dialogues.
+            # This ambiguity needs to be addressed if the TTS part is to be perfectly aligned.
+            # For now, we prioritize getting *video scenes* generated.
+            # The existing image prompt generation (generate_image_prompts_batch) uses a "full_transcript" argument.
+
+            # Fallback: use synopsis if available, for the original image generation part.
+            script_text_for_image_prompts_and_tts = script_json.get("synopsis", "No script text available for TTS/image prompts from scene_sequence.")
+            print(colored(f"Note: Using synopsis for TTS/image prompts as script_json is a complex object. For better audio, ensure 'script' contains full narration.", "yellow"))
+
+
     output_script_path = '/home/ubuntu/crewgooglegemini/001videototxt/output_transcript.json'
+    # Save the main script text (for TTS and original image pipeline)
     with open(output_script_path, 'w') as f:
         json.dump({"script": script}, f)
 
