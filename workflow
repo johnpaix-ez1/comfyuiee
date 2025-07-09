@@ -1265,11 +1265,11 @@ def await_comfy_job_completion(ws, prompt_id):
 
 
 # Global server_address and client_id are assumed to be defined as they are used by helper functions.
-# server_address = "54.80.78.81:8253"
-# client_id = str(uuid.uuid4()) # This should be initialized once per script run ideally.
+server_address = "54.80.78.81:8253"
+client_id = str(uuid.uuid4()) # This should be initialized once per script run ideally.
 
-COMFYUI_WORKFLOW_FILE = "/home/ubuntu/crewgooglegemini/0001comfy2/720workflow003(API).json" # Assumed workflow for video scene generation
-GENERATED_VIDEO_SCENES_DIR = "generated_video_scenes"
+COMFYUI_WORKFLOW_FILE = "/home/ubuntu/crewgooglegemini/0001comfy2/text_to_video_self_forcing_update API.json" # Assumed workflow for video scene generation
+GENERATED_VIDEO_SCENES_DIR = "/home/ubuntu/crewgooglegemini/001videototxt/generated_video_scenes"
 
 
 def run_video_generation_workflow(scene_prompts_data):
@@ -1284,7 +1284,7 @@ def run_video_generation_workflow(scene_prompts_data):
         return []
 
     os.makedirs(GENERATED_VIDEO_SCENES_DIR, exist_ok=True)
-    # print(colored(f"Ensured '{GENERATED_VIDEO_SCENES_DIR}' directory exists.", "green")) # Less verbose
+    print(colored(f"Ensured '{GENERATED_VIDEO_SCENES_DIR}' directory exists.", "green")) # Less verbose
 
     # Initialize WebSocket connection (client_id should be managed globally or passed)
     # For now, use the global client_id. This might need refinement if run in threads/processes.
@@ -1324,19 +1324,19 @@ def run_video_generation_workflow(scene_prompts_data):
             #       workflow["5"]["inputs"]["text"] = negative_prompt
             #       return workflow
             # So, we pass the video_prompt_text as positive, and a generic negative.
-            workflow = load_workflow(video_prompt_text, "text, watermark, signature, bad quality, low resolution")
+            workflow = load_vidscene_workflow(video_prompt_text, "text, watermark, signature, bad quality, low resolution")
 
             response = queue_prompt(workflow) # queue_prompt uses global client_id
             if response and 'prompt_id' in response:
                 prompt_id = response['prompt_id']
                 queued_jobs.append({"prompt_id": prompt_id, "video_prompt_text": video_prompt_text, "scene_index": i})
-                # print(colored(f"Queued job for scene {i+1}/{len(scene_prompts_data)}: prompt_id {prompt_id}", "green")) # Less verbose
+                print(colored(f"Queued job for scene {i+1}/{len(scene_prompts_data)}: prompt_id {prompt_id}", "green")) # Less verbose
             else:
                 print(colored(f"Failed to queue job for scene {i+1}. Response: {response}", "red"))
         except Exception as e:
             print(colored(f"Error queueing job for scene {i+1} ('{video_prompt_text[:50]}...'): {e}", "red"))
 
-        time.sleep(0.2) # Shorter delay between queueing, as ComfyUI handles a queue.
+        time.sleep(0.5) # Shorter delay between queueing, as ComfyUI handles a queue.
 
     print(colored(f"\nAll {len(queued_jobs)} applicable jobs queued. Now awaiting completion and downloading...", "cyan"))
 
@@ -1400,7 +1400,7 @@ def run_video_generation_workflow(scene_prompts_data):
     return generated_video_paths
 
 
-GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR = "generated_video_scenes_with_mmaudio"
+GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR = "/home/ubuntu/crewgooglegemini/001videototxt/generated_video_scenes_with_mmaudio"
 
 def run_mmaudio_enhancement_workflow(video_scene_paths, scene_audio_data_list, mmaudio_workflow_path):
     """
@@ -1454,7 +1454,6 @@ def run_mmaudio_enhancement_workflow(video_scene_paths, scene_audio_data_list, m
         print(colored(f"  Negative AP: {negative_audio_prompt}", "magenta"))
 
         # 1. Upload the video file for the current scene
-        # Using subfolder to keep inputs organized on ComfyUI server side, if supported well by nodes
         upload_subfolder = "mmaudio_inputs"
         video_upload_resp = upload_file_to_comfyui(video_path, server_address, subfolder_name=upload_subfolder)
         if not video_upload_resp or 'name' not in video_upload_resp:
@@ -1474,52 +1473,27 @@ def run_mmaudio_enhancement_workflow(video_scene_paths, scene_audio_data_list, m
             continue
 
         # --- PATCHING LOGIC ---
-        # This is highly dependent on the structure of `vid_mmaudio.json`
-        # User needs to verify these class_types and input field names.
         video_node_patched = False
-        audio_prompt_node_patched = False
-        neg_audio_prompt_node_patched = False
+        mmaudio_sampler_patched = False
 
         for node_id, node_data in workflow.items():
-            # Example: Patching video input node
-            # Common class_types: LoadVideo, LoadVideoUpload, VideoFileInputNode, etc.
-            # Common input fields: video, video_path, filename, file_path
-            if node_data["class_type"] == "LoadVideo" or node_data["class_type"] == "VHS_LoadVideo": # Common custom node names
-                node_data["inputs"]["video"] = uploaded_video_name # Assumes 'video' is the input field
+            # Patch video input node
+            if node_data["class_type"] == "VHS_LoadVideo":
+                node_data["inputs"]["video"] = uploaded_video_name
                 video_node_patched = True
                 print(colored(f"  Patched MMAudio video input node '{node_id}' ({node_data['class_type']}) with: {uploaded_video_name}", "green"))
 
-            # Example: Patching positive audio prompt node
-            # Common class_types: PrimitiveNode, StringInputNode, MMAudioPromptNode, etc.
-            # Common input fields: text, string, prompt, positive_prompt
-            # Assuming a node for positive prompt, e.g., one that has a widget named 'text' or 'prompt'
-            # This is a guess; a specific node class_type for prompts is better.
-            if node_data["class_type"] == "CLIPTextEncode" and "text" in node_data["inputs"]: # A common pattern for text inputs
-                 # Check if this node is likely for audio by looking at connected nodes or a conventional title in actual workflow
-                 # For now, this is a placeholder. If MMAudio has specific prompt nodes, use their class_type.
-                 # Let's assume there's a node specifically for the positive audio prompt.
-                 # Placeholder: node_data["_meta"]["title"] == "Positive MMAudio Prompt"
-                 # This requires the user to title their nodes in ComfyUI if we use _meta.title.
-                 # A more robust way is to agree on a specific class_type or specific input name for audio prompts.
-                 # For now, let's assume a specific node ID is known or a unique class_type for MMAudio prompts.
-                 # If we assume node "10" is for positive audio prompt (hypothetical):
-                 if node_id == "10": # HYPOTHETICAL NODE ID FOR POSITIVE AUDIO PROMPT
-                     node_data["inputs"]["text"] = positive_audio_prompt
-                     audio_prompt_node_patched = True
-                     print(colored(f"  Patched positive audio prompt for node '{node_id}' with: {positive_audio_prompt[:50]}...", "green"))
-
-            # Example: Patching negative audio prompt node
-            # Similar assumptions as positive prompt. If node "11" is for negative (hypothetical):
-            if node_id == "11": # HYPOTHETICAL NODE ID FOR NEGATIVE AUDIO PROMPT
-                node_data["inputs"]["text"] = negative_audio_prompt
-                neg_audio_prompt_node_patched = True
-                print(colored(f"  Patched negative audio prompt for node '{node_id}' with: {negative_audio_prompt[:50]}...", "green"))
+            # Patch both positive and negative prompts in the MMAudioSampler node
+            if node_data["class_type"] == "MMAudioSampler":
+                node_data["inputs"]["prompt"] = positive_audio_prompt
+                node_data["inputs"]["negative_prompt"] = negative_audio_prompt
+                mmaudio_sampler_patched = True
+                print(colored(f"  Patched MMAudioSampler node '{node_id}' with audio prompts.", "green"))
 
         if not video_node_patched:
             print(colored("  Warning: Could not find or patch the video input node in MMAudio workflow. Please check class_type/input field.", "yellow"))
-        if not audio_prompt_node_patched:
-            print(colored("  Warning: Could not find or patch the positive audio prompt node. Please check class_type/input field or node ID.", "yellow"))
-        # Negative prompt is optional, so less critical if not patched.
+        if not mmaudio_sampler_patched:
+            print(colored("  Warning: Could not find or patch the MMAudioSampler node for prompts. Please check class_type/input field.", "yellow"))
 
         # 3. Queue the MMAudio job
         mmaudio_response = queue_prompt(workflow) # Uses global client_id
@@ -1574,7 +1548,6 @@ def run_mmaudio_enhancement_workflow(video_scene_paths, scene_audio_data_list, m
 
     print(colored(f"MMAudio enhancement workflow finished. {len(enhanced_video_paths)} videos processed and saved to '{GENERATED_VIDEO_SCENES_WITH_MMAUDIO_DIR}'.", "green"))
     return enhanced_video_paths
-
 
 def process_and_generate_images():
     output_dir = "/home/ubuntu/crewgooglegemini/0001comfy2/outputs"
@@ -1658,6 +1631,15 @@ def load_workflow(positive_prompt, negative_prompt):
     workflow["4"]["inputs"]["text"] = positive_prompt
     workflow["5"]["inputs"]["text"] = negative_prompt
     return workflow
+
+
+def load_vidscene_workflow(positive_prompt, negative_prompt):
+    with open("/home/ubuntu/crewgooglegemini/0001comfy2/text_to_video_self_forcing_update API.json", "r", encoding="utf-8") as f:
+        workflow = json.load(f)
+    workflow["6"]["inputs"]["text"] = positive_prompt
+    workflow["51"]["inputs"]["text"] = negative_prompt
+    return workflow
+    
 
 def queue_prompt(workflow):
     p = {"prompt": workflow, "client_id": client_id}
@@ -3228,6 +3210,16 @@ async def run_full_pipeline(new_video_title, script, transcript_text=None):
     video_scene_paths = []
     if scene_prompts_data:
         print(colored(f"Successfully generated {len(scene_prompts_data)} sets of video/audio prompts.", "green"))
+        # Define your output file path
+        prompts_output_path = "/home/ubuntu/crewgooglegemini/001videototxt/transcripts/video_prompts.json"
+    
+        # Make sure the directory exists
+        os.makedirs(os.path.dirname(prompts_output_path), exist_ok=True)
+    
+        # Save to JSON
+        with open(prompts_output_path, "w", encoding="utf-8") as f:
+            json.dump(scene_prompts_data, f, ensure_ascii=False, indent=2)
+        print(f"Prompts saved to {prompts_output_path}")
 
         print(colored("Step B: Running video scene generation workflow...", "blue"))
         # run_video_generation_workflow expects a list of dicts, and uses item['video_prompt']
@@ -3257,7 +3249,7 @@ async def run_full_pipeline(new_video_title, script, transcript_text=None):
     # This will require further modification of how video_clips are sourced later.
 
     # Save script (text part) for image prompt context (original image generation) and other uses
-    script_text_for_image_prompts_and_tts = ""
+    script_text_for_image_prompts_and_tts = "/home/ubuntu/crewgooglegemini/001videototxt/script.json"
     if isinstance(script_json, dict) and "script" in script_json: # If script_json is from generate_biblical_script like format
         script_text_for_image_prompts_and_tts = script_json["script"]
     elif isinstance(script_json, dict) and "scene_sequence" in script_json: # If script_json is from generate_script_from_video
